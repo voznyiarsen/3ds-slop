@@ -102,6 +102,7 @@ static C2D_TextBuf text_buf = NULL;
 constexpr size_t VERTEX_COUNT = sizeof(cube_vertices) / sizeof(cube_vertices[0]);
 constexpr size_t EDGE_COUNT = sizeof(cube_edges) / sizeof(cube_edges[0]);
 constexpr size_t FACE_INDEX_COUNT = sizeof(cube_faces) / sizeof(cube_faces[0]);
+static_assert(VERTEX_COUNT == 8, "vertex_names must match VERTEX_COUNT");
 
 static Vec3 vec3_cross(Vec3 a, Vec3 b)
 {
@@ -214,7 +215,7 @@ static void render_cube_faces(void)
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
 
 	C3D_ImmDrawBegin(GPU_TRIANGLES);
-	for (int i = 0; i < 36; i++)
+	for (size_t i = 0; i < FACE_INDEX_COUNT; i++)
 		send_vertex_data(&cube_vertices[cube_faces[i]]);
 	C3D_ImmDrawEnd();
 }
@@ -228,7 +229,7 @@ static void render_cube_wireframe(void)
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
 
 	C3D_ImmDrawBegin(GPU_TRIANGLES);
-	for (int i = 0; i < 12; i++)
+	for (size_t i = 0; i < EDGE_COUNT; i++)
 	{
 		Vertex* v0 = &cube_vertices[cube_edges[i].v0];
 		Vertex* v1 = &cube_vertices[cube_edges[i].v1];
@@ -281,7 +282,7 @@ static void render_cube_points(void)
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
 
 	C3D_ImmDrawBegin(GPU_TRIANGLES);
-	for (int i = 0; i < 8; i++)
+	for (size_t i = 0; i < VERTEX_COUNT; i++)
 	{
 		Vertex* vertex = &cube_vertices[i];
 
@@ -289,7 +290,7 @@ static void render_cube_points(void)
 		float r = vertex->r;
 		float g = vertex->g;
 		float b = vertex->b;
-		if (i == selected_vertex)
+		if ((int)i == selected_vertex)
 		{
 			r = 1.0f;
 			g = 1.0f;
@@ -308,9 +309,7 @@ static void render_cube_points(void)
 
 static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* ndc, float* clip_w)
 {
-	C3D_Mtx model;
-	build_model(&model);
-	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
+	C3D_FVec world = Mtx_MultiplyFVec4(&g_model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
 	C3D_FVec clip = Mtx_MultiplyFVec4(&proj_cpu, world);
 	if (clip.w <= 0.0001f) return false;
 	if (clip_w) *clip_w = clip.w;
@@ -324,7 +323,7 @@ static int find_closest_vertex(float tx, float ty)
 	float best_z = 2.0f;
 	bool found_in_radius = false;
 
-	for (int i = 0; i < 8; i++)
+	for (size_t i = 0; i < VERTEX_COUNT; i++)
 	{
 		float sx, sy;
 		C3D_FVec ndc;
@@ -363,14 +362,7 @@ static void move_selected_vertex(float dx, float dy)
 	float current_sy = (0.5f - ndc.y * 0.5f) * TOP_HEIGHT;
 	float old_clip_z = ndc.z * clip_w;
 
-	C3D_Mtx model;
-	C3D_Mtx combined;
-	C3D_Mtx inverse_combined;
-	build_model(&model);
-	Mtx_Multiply(&combined, &proj_cpu, &model);
-	Mtx_Copy(&inverse_combined, &combined);
-	if (fabsf(Mtx_Inverse(&inverse_combined)) < 0.0001f) return;
-
+	// g_model and g_inv_combined are already fresh here (update_cached_matrices ran before touch handling and after any drag mutation)
 	float ndc_x = (current_sx + dx) / TOP_WIDTH * 2.0f - 1.0f;
 	float ndc_y = 1.0f - (current_sy + dy) / TOP_HEIGHT * 2.0f;
 	// Clamp to avoid extreme unprojection outside frustum
@@ -380,12 +372,12 @@ static void move_selected_vertex(float dx, float dy)
 	if (ndc_y > Config::MAX_NDC) ndc_y = Config::MAX_NDC;
 
 	C3D_FVec clip = FVec4_New(ndc_x * clip_w, ndc_y * clip_w, old_clip_z, clip_w);
-	C3D_FVec local = Mtx_MultiplyFVec4(&inverse_combined, clip);
+	C3D_FVec local = Mtx_MultiplyFVec4(&g_inv_combined, clip);
 	if (fabsf(local.w) < 0.0001f) return;
 	local = FVec4_PerspDivide(local);
 	if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z)) return;
 	// Prevent dragging outside view frustum (near/far planes)
-	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(local.x, local.y, local.z, 1.0f));
+	C3D_FVec world = Mtx_MultiplyFVec4(&g_model, FVec4_New(local.x, local.y, local.z, 1.0f));
 	if (world.z > -Config::NEAR_PLANE || world.z < -Config::FAR_PLANE) return;
 
 	cube_vertices[selected_vertex].x = local.x;
@@ -449,7 +441,7 @@ static void handle_input(u32 kDown, u32 kHeld)
 
 	if (kDown & KEY_Y)
 	{
-		for (int i = 0; i < 8; i++)
+		for (size_t i = 0; i < VERTEX_COUNT; i++)
 		{
 			float h = (float)rand() / (float)RAND_MAX * 360.0f;
 			float r,g,b;
@@ -531,7 +523,7 @@ static void render_ui(void)
 	draw_ui_text(buf, 8.0f, 126.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 
 	draw_ui_text("Vertices:", 8.0f, 150.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
-	for (int i = 0; i < 8; i++)
+	for (size_t i = 0; i < VERTEX_COUNT; i++)
 	{
 		float x = 8.0f + (i % 2) * 160.0f;
 		float y = 168.0f + (i / 2) * 18.0f;
@@ -540,7 +532,7 @@ static void render_ui(void)
 		u8 cb = (u8)(std::max(0.0f, std::min(cube_vertices[i].b * 255.0f, 255.0f)));
 		u32 swatch_color = C2D_Color32(cr, cg, cb, 255);
 		C2D_DrawRectSolid(x, y + 2.0f, 0.5f, 7.0f, 7.0f, swatch_color);
-		u32 text_color = (i == selected_vertex) ? C2D_Color32(0, 255, 255, 255) : C2D_Color32(255, 255, 255, 255);
+		u32 text_color = ((int)i == selected_vertex) ? C2D_Color32(0, 255, 255, 255) : C2D_Color32(255, 255, 255, 255);
 		std::snprintf(buf, sizeof(buf), "%s %.1f %.1f %.1f", vertex_names[i], cube_vertices[i].x, cube_vertices[i].y, cube_vertices[i].z);
 		draw_ui_text(buf, x + 12.0f, y, 0.28f, text_color);
 	}
