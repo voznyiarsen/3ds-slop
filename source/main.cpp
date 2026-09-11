@@ -162,10 +162,10 @@ static void render_cube_wireframe(void)
 	C3D_Mtx inverse_model;
 	build_model(&model);
 	Mtx_Copy(&inverse_model, &model);
-	Mtx_Inverse(&inverse_model);
+	if (fabsf(Mtx_Inverse(&inverse_model)) < 0.00001f) return;
 
 	Vec3 view_direction = {-cube_pos.x, -cube_pos.y, -cube_pos.z};
-	view_direction = vec3_normalized(view_direction, (Vec3){0.0f, 0.0f, -1.0f});
+	view_direction = vec3_normalized(view_direction, Vec3{0.0f, 0.0f, -1.0f});
 
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &model);
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
@@ -178,11 +178,21 @@ static void render_cube_wireframe(void)
 		Vec3 edge = {b->x - a->x, b->y - a->y, b->z - a->z};
 		C3D_FVec world_edge = Mtx_MultiplyFVec4(&model, FVec4_New(edge.x, edge.y, edge.z, 0.0f));
 		Vec3 world_edge_vec = {world_edge.x, world_edge.y, world_edge.z};
-		Vec3 normal = vec3_cross(world_edge_vec, view_direction);
-		normal = vec3_normalized(normal, (Vec3){0.0f, 1.0f, 0.0f});
+		float edge_len = vec3_length(world_edge_vec);
+		if (edge_len < 0.00001f) continue;
+		Vec3 e = {world_edge_vec.x / edge_len, world_edge_vec.y / edge_len, world_edge_vec.z / edge_len};
+		Vec3 normal = vec3_cross(e, view_direction);
+		if (vec3_length(normal) < 0.00001f)
+		{
+			Vec3 reference;
+			if (fabsf(e.x) < 0.9f) reference = Vec3{1.0f, 0.0f, 0.0f};
+			else reference = Vec3{0.0f, 1.0f, 0.0f};
+			normal = vec3_cross(e, reference);
+		}
+		normal = vec3_normalized(normal, Vec3{0.0f, 1.0f, 0.0f});
 		C3D_FVec local_normal = Mtx_MultiplyFVec4(&inverse_model, FVec4_New(normal.x, normal.y, normal.z, 0.0f));
 		Vec3 local_normal_vec = {local_normal.x, local_normal.y, local_normal.z};
-		local_normal_vec = vec3_normalized(local_normal_vec, (Vec3){0.0f, 1.0f, 0.0f});
+		local_normal_vec = vec3_normalized(local_normal_vec, Vec3{0.0f, 1.0f, 0.0f});
 
 		const float thickness = 0.025f;
 		send_vertex(a->x + local_normal_vec.x * thickness, a->y + local_normal_vec.y * thickness, a->z + local_normal_vec.z * thickness, a->r, a->g, a->b);
@@ -201,10 +211,10 @@ static void render_cube_points(void)
 	C3D_Mtx inverse_model;
 	build_model(&model);
 	Mtx_Copy(&inverse_model, &model);
-	Mtx_Inverse(&inverse_model);
+	if (fabsf(Mtx_Inverse(&inverse_model)) < 0.00001f) return;
 
 	Vec3 view_direction = {-cube_pos.x, -cube_pos.y, -cube_pos.z};
-	view_direction = vec3_normalized(view_direction, (Vec3){0.0f, 0.0f, -1.0f});
+	view_direction = vec3_normalized(view_direction, Vec3{0.0f, 0.0f, -1.0f});
 	C3D_FVec local_view = Mtx_MultiplyFVec4(&inverse_model, FVec4_New(view_direction.x, view_direction.y, view_direction.z, 0.0f));
 	Vec3 local_view_vec = {local_view.x, local_view.y, local_view.z};
 
@@ -215,14 +225,14 @@ static void render_cube_points(void)
 	for (int i = 0; i < 8; i++)
 	{
 		Vertex* vertex = &cube_vertices[i];
-		Vec3 normal = vec3_normalized(local_view_vec, (Vec3){0.0f, 0.0f, 1.0f});
+		Vec3 normal = vec3_normalized(local_view_vec, Vec3{0.0f, 0.0f, 1.0f});
 		Vec3 reference = {0.0f, 0.0f, 1.0f};
 		if (fabsf(normal.x * reference.x + normal.y * reference.y + normal.z * reference.z) > 0.9f)
-			reference = (Vec3){0.0f, 1.0f, 0.0f};
+			reference = Vec3{0.0f, 1.0f, 0.0f};
 		Vec3 right = vec3_cross(normal, reference);
-		right = vec3_normalized(right, (Vec3){1.0f, 0.0f, 0.0f});
+		right = vec3_normalized(right, Vec3{1.0f, 0.0f, 0.0f});
 		Vec3 up = vec3_cross(normal, right);
-		up = vec3_normalized(up, (Vec3){0.0f, 1.0f, 0.0f});
+		up = vec3_normalized(up, Vec3{0.0f, 1.0f, 0.0f});
 
 		const float size = 0.055f;
 		float r = vertex->r;
@@ -245,29 +255,30 @@ static void render_cube_points(void)
 	C3D_ImmDrawEnd();
 }
 
-static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* clip)
+static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* ndc, float* clip_w)
 {
 	C3D_Mtx model;
 	build_model(&model);
 
 	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
-	*clip = Mtx_MultiplyFVec4(&proj_top, world);
-	if (fabsf(clip->w) < 0.0001f) return false;
-	*clip = FVec4_PerspDivide(*clip);
+	C3D_FVec clip = Mtx_MultiplyFVec4(&proj_top, world);
+	if (clip.w <= 0.0001f) return false;
+	if (clip_w) *clip_w = clip.w;
+	*ndc = FVec4_PerspDivide(clip);
 	return true;
 }
 
-static bool project_vertex(const Vertex* vertex, float* sx, float* sy)
+static bool __attribute__((unused)) project_vertex(const Vertex* vertex, float* sx, float* sy)
 {
-	C3D_FVec clip;
-	if (!project_vertex_clip(vertex, &clip)) return false;
+	C3D_FVec ndc;
+	if (!project_vertex_clip(vertex, &ndc, NULL)) return false;
 
-	*sx = (clip.x * 0.5f + 0.5f) * TOP_WIDTH;
-	*sy = (0.5f - clip.y * 0.5f) * TOP_HEIGHT;
+	*sx = (ndc.x * 0.5f + 0.5f) * TOP_WIDTH;
+	*sy = (0.5f - ndc.y * 0.5f) * TOP_HEIGHT;
 	return true;
 }
 
-static bool screen_to_local(float sx, float sy, float reference_z, const C3D_Mtx* inverse_matrix, Vec3* local)
+static bool __attribute__((unused)) screen_to_local(float sx, float sy, float reference_z, const C3D_Mtx* inverse_matrix, Vec3* local)
 {
 	float ndc_x = sx / TOP_WIDTH * 2.0f - 1.0f;
 	float ndc_y = 1.0f - sy / TOP_HEIGHT * 2.0f;
@@ -284,18 +295,30 @@ static bool screen_to_local(float sx, float sy, float reference_z, const C3D_Mtx
 static int find_closest_vertex(float tx, float ty)
 {
 	int closest = -1;
-	float closest_dist = 24.0f;
+	float closest_dist_sq = 24.0f * 24.0f;
+	float best_z = -2.0f;
 
 	for (int i = 0; i < 8; i++)
 	{
 		float sx, sy;
-		if (!project_vertex(&cube_vertices[i], &sx, &sy)) continue;
+		C3D_FVec ndc;
+		float clip_w;
+		if (!project_vertex_clip(&cube_vertices[i], &ndc, &clip_w)) continue;
+		sx = (ndc.x * 0.5f + 0.5f) * TOP_WIDTH;
+		sy = (0.5f - ndc.y * 0.5f) * TOP_HEIGHT;
 		float dx = sx - tx;
 		float dy = sy - ty;
-		float dist = sqrtf(dx * dx + dy * dy);
-		if (dist < closest_dist)
+		float dist_sq = dx * dx + dy * dy;
+		if (dist_sq < closest_dist_sq)
 		{
-			closest_dist = dist;
+			closest_dist_sq = dist_sq;
+			best_z = ndc.z;
+			closest = i;
+		}
+		else if (dist_sq < 24.0f * 24.0f && ndc.z > best_z)
+		{
+			// Prefer nearer depth among ties within radius
+			best_z = ndc.z;
 			closest = i;
 		}
 	}
@@ -307,11 +330,13 @@ static void move_selected_vertex(float dx, float dy)
 {
 	if (selected_vertex < 0) return;
 
-	float current_sx, current_sy;
-	C3D_FVec current_clip;
-	if (!project_vertex_clip(&cube_vertices[selected_vertex], &current_clip)) return;
-	current_sx = (current_clip.x * 0.5f + 0.5f) * TOP_WIDTH;
-	current_sy = (0.5f - current_clip.y * 0.5f) * TOP_HEIGHT;
+	C3D_FVec ndc;
+	float clip_w;
+	if (!project_vertex_clip(&cube_vertices[selected_vertex], &ndc, &clip_w)) return;
+
+	float current_sx = (ndc.x * 0.5f + 0.5f) * TOP_WIDTH;
+	float current_sy = (0.5f - ndc.y * 0.5f) * TOP_HEIGHT;
+	float old_clip_z = ndc.z * clip_w;
 
 	C3D_Mtx model;
 	C3D_Mtx combined;
@@ -321,17 +346,26 @@ static void move_selected_vertex(float dx, float dy)
 	Mtx_Copy(&inverse_combined, &combined);
 	if (fabsf(Mtx_Inverse(&inverse_combined)) < 0.0001f) return;
 
-	Vec3 old_local = {
-		cube_vertices[selected_vertex].x,
-		cube_vertices[selected_vertex].y,
-		cube_vertices[selected_vertex].z
-	};
-	Vec3 new_local;
-	if (!screen_to_local(current_sx + dx, current_sy + dy, current_clip.z, &inverse_combined, &new_local)) return;
+	float ndc_x = (current_sx + dx) / TOP_WIDTH * 2.0f - 1.0f;
+	float ndc_y = 1.0f - (current_sy + dy) / TOP_HEIGHT * 2.0f;
+	// Clamp to avoid extreme unprojection outside frustum
+	if (ndc_x < -1.0f) ndc_x = -1.0f;
+	if (ndc_x >  1.0f) ndc_x =  1.0f;
+	if (ndc_y < -1.0f) ndc_y = -1.0f;
+	if (ndc_y >  1.0f) ndc_y =  1.0f;
 
-	cube_vertices[selected_vertex].x += new_local.x - old_local.x;
-	cube_vertices[selected_vertex].y += new_local.y - old_local.y;
-	cube_vertices[selected_vertex].z += new_local.z - old_local.z;
+	C3D_FVec clip = FVec4_New(ndc_x * clip_w, ndc_y * clip_w, old_clip_z, clip_w);
+	C3D_FVec local = Mtx_MultiplyFVec4(&inverse_combined, clip);
+	if (fabsf(local.w) < 0.0001f) return;
+	local = FVec4_PerspDivide(local);
+	if (!isfinite(local.x) || !isfinite(local.y) || !isfinite(local.z)) return;
+	// Prevent dragging behind near plane
+	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(local.x, local.y, local.z, 1.0f));
+	if (world.z > -0.1f) return;
+
+	cube_vertices[selected_vertex].x = local.x;
+	cube_vertices[selected_vertex].y = local.y;
+	cube_vertices[selected_vertex].z = local.z;
 }
 
 static float touch_to_top_x(float x)
@@ -379,30 +413,33 @@ static void handle_input(u32 kDown, u32 kHeld)
 		}
 	}
 
-	if (kHeld & KEY_TOUCH)
+	if (kDown & KEY_TOUCH)
 	{
 		touchPosition touch;
 		hidTouchRead(&touch);
 		float tx = touch_to_top_x((float)touch.px);
 		float ty = (float)touch.py;
-
-		if (!touch_active)
-		{
-			selected_vertex = find_closest_vertex(tx, ty);
-			prev_touch_x = tx;
-			prev_touch_y = ty;
-			touch_active = selected_vertex >= 0;
-		}
-		else
+		selected_vertex = find_closest_vertex(tx, ty);
+		prev_touch_x = tx;
+		prev_touch_y = ty;
+		touch_active = true;
+	}
+	else if (touch_active && (kHeld & KEY_TOUCH))
+	{
+		touchPosition touch;
+		hidTouchRead(&touch);
+		float tx = touch_to_top_x((float)touch.px);
+		float ty = (float)touch.py;
+		if (selected_vertex >= 0)
 		{
 			float dx = tx - prev_touch_x;
 			float dy = ty - prev_touch_y;
 			move_selected_vertex(dx, dy);
-			prev_touch_x = tx;
-			prev_touch_y = ty;
 		}
+		prev_touch_x = tx;
+		prev_touch_y = ty;
 	}
-	else
+	else if (!(kHeld & KEY_TOUCH))
 	{
 		touch_active = false;
 	}
@@ -458,13 +495,25 @@ static bool load_shaders(void)
 	cube_dvlb = DVLB_ParseFile((u32*)cube_shbin, cube_shbin_size);
 	if (!cube_dvlb) return false;
 
-	shaderProgramInit(&cube_program);
+	if (R_FAILED(shaderProgramInit(&cube_program)))
+	{
+		DVLB_Free(cube_dvlb);
+		cube_dvlb = NULL;
+		return false;
+	}
+
 	shaderProgramSetVsh(&cube_program, &cube_dvlb->DVLE[0]);
 	C3D_BindProgram(&cube_program);
 
 	uLoc_projection = shaderInstanceGetUniformLocation(cube_program.vertexShader, "projection");
 	uLoc_modelView  = shaderInstanceGetUniformLocation(cube_program.vertexShader, "modelView");
-	if (uLoc_projection < 0 || uLoc_modelView < 0) return false;
+	if (uLoc_projection < 0 || uLoc_modelView < 0)
+	{
+		shaderProgramFree(&cube_program);
+		DVLB_Free(cube_dvlb);
+		cube_dvlb = NULL;
+		return false;
+	}
 
 	AttrInfo_Init(&cube_attr_info);
 	AttrInfo_AddLoader(&cube_attr_info, 0, GPU_FLOAT, 4);
@@ -536,6 +585,8 @@ int main(int argc, char** argv)
 		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, 0x202020FF, 0);
 		configure_cube_state();
 		render_cube_faces();
+		// Overlay passes: disable depth to avoid half-culled ribbons/markers and allow back-vertex picking
+		C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
 		render_cube_wireframe();
 		render_cube_points();
 
@@ -551,6 +602,7 @@ exit:
 	unload_shaders();
 	if (text_buf) C2D_TextBufDelete(text_buf);
 	if (top_target) C3D_RenderTargetDelete(top_target);
+	if (bot_target) C3D_RenderTargetDelete(bot_target);
 	if (c2d_initialized) C2D_Fini();
 	if (c3d_initialized) C3D_Fini();
 	gfxExit();
