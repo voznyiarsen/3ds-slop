@@ -268,8 +268,9 @@ static void render_cube_points(void)
 
 static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* ndc, float* clip_w)
 {
-	// Use cached g_model for performance (avoids rebuilding 9x per frame during picking)
-	C3D_FVec world = Mtx_MultiplyFVec4(&g_model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
+	C3D_Mtx model;
+	build_model(&model);
+	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
 	C3D_FVec clip = Mtx_MultiplyFVec4(&proj_top, world);
 	if (clip.w <= 0.0001f) return false;
 	if (clip_w) *clip_w = clip.w;
@@ -329,9 +330,11 @@ static void move_selected_vertex(float dx, float dy)
 	float current_sy = (0.5f - ndc.y * 0.5f) * TOP_HEIGHT;
 	float old_clip_z = ndc.z * clip_w;
 
+	C3D_Mtx model;
 	C3D_Mtx combined;
 	C3D_Mtx inverse_combined;
-	Mtx_Multiply(&combined, &proj_top, &g_model);
+	build_model(&model);
+	Mtx_Multiply(&combined, &proj_top, &model);
 	Mtx_Copy(&inverse_combined, &combined);
 	if (fabsf(Mtx_Inverse(&inverse_combined)) < 0.0001f) return;
 
@@ -349,7 +352,7 @@ static void move_selected_vertex(float dx, float dy)
 	local = FVec4_PerspDivide(local);
 	if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z)) return;
 	// Prevent dragging outside view frustum (near/far planes)
-	C3D_FVec world = Mtx_MultiplyFVec4(&g_model, FVec4_New(local.x, local.y, local.z, 1.0f));
+	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(local.x, local.y, local.z, 1.0f));
 	if (world.z > -Config::NEAR_PLANE || world.z < -Config::FAR_PLANE) return;
 
 	cube_vertices[selected_vertex].x = local.x;
@@ -581,8 +584,8 @@ int main(int argc, char** argv)
 		u32 kHeld = hidKeysHeld();
 		if (kDown & KEY_START) break;
 
-		update_cached_matrices();
 		handle_input(kDown, kHeld);
+		update_cached_matrices();
 
 		if (!C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) continue;
 
