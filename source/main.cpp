@@ -28,6 +28,8 @@ namespace Config {
 	constexpr float DEADZONE = 15.0f;
 	constexpr float MOVE_SPEED = 0.1f;
 	constexpr float ROT_SPEED = 0.01f;
+	constexpr float MIN_NDC = -1.0f;
+	constexpr float MAX_NDC = 1.0f;
 }
 
 static DVLB_s* cube_dvlb = NULL;
@@ -54,24 +56,6 @@ typedef struct {
 typedef struct {
 	float x, y, z;
 } Vec3;
-
-// Encapsulated cube state for better modularity (future refactor)
-struct Cube {
-	Vertex vertices[8];
-	Vec3 pos;
-	float rot_x, rot_y, rot_z;
-	C3D_Mtx model;
-	C3D_Mtx inv_model;
-	void update_matrices() {
-		Mtx_Identity(&model);
-		Mtx_Translate(&model, pos.x, pos.y, pos.z, true);
-		Mtx_RotateX(&model, rot_x, true);
-		Mtx_RotateY(&model, rot_y, true);
-		Mtx_RotateZ(&model, rot_z, true);
-		Mtx_Copy(&inv_model, &model);
-		if (fabsf(Mtx_Inverse(&inv_model)) < 0.00001f) Mtx_Identity(&inv_model);
-	}
-};
 
 static Vertex cube_vertices[8] = {
 	{-1.0f, -1.0f, -1.0f, 1.0f, 0.0f, 0.0f},
@@ -354,10 +338,10 @@ static void move_selected_vertex(float dx, float dy)
 	float ndc_x = (current_sx + dx) / TOP_WIDTH * 2.0f - 1.0f;
 	float ndc_y = 1.0f - (current_sy + dy) / TOP_HEIGHT * 2.0f;
 	// Clamp to avoid extreme unprojection outside frustum
-	if (ndc_x < -1.0f) ndc_x = -1.0f;
-	if (ndc_x >  1.0f) ndc_x =  1.0f;
-	if (ndc_y < -1.0f) ndc_y = -1.0f;
-	if (ndc_y >  1.0f) ndc_y =  1.0f;
+	if (ndc_x < Config::MIN_NDC) ndc_x = Config::MIN_NDC;
+	if (ndc_x > Config::MAX_NDC) ndc_x = Config::MAX_NDC;
+	if (ndc_y < Config::MIN_NDC) ndc_y = Config::MIN_NDC;
+	if (ndc_y > Config::MAX_NDC) ndc_y = Config::MAX_NDC;
 
 	C3D_FVec clip = FVec4_New(ndc_x * clip_w, ndc_y * clip_w, old_clip_z, clip_w);
 	C3D_FVec local = Mtx_MultiplyFVec4(&inverse_combined, clip);
@@ -427,36 +411,33 @@ static void handle_input(u32 kDown, u32 kHeld)
 		}
 	}
 
-	// Ensure cached matrices are up-to-date for picking (avoids stale g_model)
-	update_cached_matrices();
+	touchPosition touch;
+	if (kHeld & KEY_TOUCH)
+	{
+		hidTouchRead(&touch);
+		float tx = touch_to_top_x((float)touch.px);
+		float ty = (float)touch.py;
 
-	if (kDown & KEY_TOUCH)
-	{
-		touchPosition touch;
-		hidTouchRead(&touch);
-		float tx = touch_to_top_x((float)touch.px);
-		float ty = (float)touch.py;
-		selected_vertex = find_closest_vertex(tx, ty);
-		prev_touch_x = tx;
-		prev_touch_y = ty;
-		touch_active = true;
-	}
-	else if (touch_active && (kHeld & KEY_TOUCH))
-	{
-		touchPosition touch;
-		hidTouchRead(&touch);
-		float tx = touch_to_top_x((float)touch.px);
-		float ty = (float)touch.py;
-		if (selected_vertex >= 0)
+		if (kDown & KEY_TOUCH)
 		{
-			float dx = tx - prev_touch_x;
-			float dy = ty - prev_touch_y;
-			move_selected_vertex(dx, dy);
+			selected_vertex = find_closest_vertex(tx, ty);
+			prev_touch_x = tx;
+			prev_touch_y = ty;
+			touch_active = true;
 		}
-		prev_touch_x = tx;
-		prev_touch_y = ty;
+		else if (touch_active)
+		{
+			if (selected_vertex >= 0)
+			{
+				float dx = tx - prev_touch_x;
+				float dy = ty - prev_touch_y;
+				move_selected_vertex(dx, dy);
+			}
+			prev_touch_x = tx;
+			prev_touch_y = ty;
+		}
 	}
-	else if (!(kHeld & KEY_TOUCH))
+	else
 	{
 		touch_active = false;
 	}
