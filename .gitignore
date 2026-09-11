@@ -4,5 +4,7 @@ cube_shbin.h
 *.d
 *.elf
 *.3dsx
-cube_shbin.h
 build/shaders/cube.s
+source/shaders/cube.shbin
+# generated shader header in project root
+cube_shbin.h

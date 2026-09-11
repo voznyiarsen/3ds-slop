@@ -1,8 +1,5 @@
 TARGET := cube_manipulator
 BUILD := build
-SOURCES := source
-DATA := data
-INCLUDE := include
 
 ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfpv3-d16
 
@@ -17,7 +14,6 @@ PATH := $(DEVKITPRO)/tools/bin:$(DEVKITARM)/bin:$(DEVKITPRO)/libctru/bin:$(PATH)
 CC := $(DEVKITARM)/bin/arm-none-eabi-gcc
 CXX := $(DEVKITARM)/bin/arm-none-eabi-g++
 LD := $(DEVKITARM)/bin/arm-none-eabi-g++
-AR := $(DEVKITARM)/bin/arm-none-eabi-ar
 
 all: $(BUILD)/$(TARGET).elf $(BUILD)/$(TARGET).3dsx
 

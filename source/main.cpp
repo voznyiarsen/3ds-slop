@@ -166,8 +166,6 @@ static void render_cube_wireframe(void)
 
 	Vec3 view_direction = {-cube_pos.x, -cube_pos.y, -cube_pos.z};
 	view_direction = vec3_normalized(view_direction, (Vec3){0.0f, 0.0f, -1.0f});
-	C3D_FVec local_view = Mtx_MultiplyFVec4(&inverse_model, FVec4_New(view_direction.x, view_direction.y, view_direction.z, 0.0f));
-	Vec3 local_view_vec = {local_view.x, local_view.y, local_view.z};
 
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &model);
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
@@ -321,7 +319,7 @@ static void move_selected_vertex(float dx, float dy)
 	build_model(&model);
 	Mtx_Multiply(&combined, &proj_top, &model);
 	Mtx_Copy(&inverse_combined, &combined);
-	if (Mtx_Inverse(&inverse_combined) == 0.0f) return;
+	if (fabsf(Mtx_Inverse(&inverse_combined)) < 0.0001f) return;
 
 	Vec3 old_local = {
 		cube_vertices[selected_vertex].x,
@@ -345,8 +343,6 @@ static void handle_input(u32 kDown, u32 kHeld)
 {
 	circlePosition circle;
 	hidCircleRead(&circle);
-	touchPosition touch;
-	hidTouchRead(&touch);
 
 	float move_speed = 0.1f;
 	float rot_speed = 0.01f;
@@ -385,6 +381,8 @@ static void handle_input(u32 kDown, u32 kHeld)
 
 	if (kHeld & KEY_TOUCH)
 	{
+		touchPosition touch;
+		hidTouchRead(&touch);
 		float tx = touch_to_top_x((float)touch.px);
 		float ty = (float)touch.py;
 
@@ -466,6 +464,7 @@ static bool load_shaders(void)
 
 	uLoc_projection = shaderInstanceGetUniformLocation(cube_program.vertexShader, "projection");
 	uLoc_modelView  = shaderInstanceGetUniformLocation(cube_program.vertexShader, "modelView");
+	if (uLoc_projection < 0 || uLoc_modelView < 0) return false;
 
 	AttrInfo_Init(&cube_attr_info);
 	AttrInfo_AddLoader(&cube_attr_info, 0, GPU_FLOAT, 4);
@@ -493,10 +492,9 @@ int main(int argc, char** argv)
 {
 	(void)argc;
 	(void)argv;
-	srand((unsigned)osGetTime());
+	srand((unsigned)svcGetSystemTick());
 
 	gfxInitDefault();
-	hidInit();
 	hidSetRepeatParameters(20, 10);
 
 	bool c3d_initialized = false;
@@ -519,7 +517,7 @@ int main(int argc, char** argv)
 
 	Mtx_PerspTilt(&proj_top, C3D_AngleFromDegrees(70.0f), C3D_AspectRatioTop, 0.1f, 100.0f, false);
 
-	text_buf = C2D_TextBufNew(4096);
+	text_buf = C2D_TextBufNew(8192);
 	if (!text_buf) goto exit;
 	if (!load_shaders()) goto exit;
 
@@ -534,8 +532,8 @@ int main(int argc, char** argv)
 
 		if (!C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) continue;
 
-		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, 0x202020FF, 0);
 		C3D_FrameDrawOn(top_target);
+		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, 0x202020FF, 0);
 		configure_cube_state();
 		render_cube_faces();
 		render_cube_wireframe();
@@ -552,9 +550,9 @@ int main(int argc, char** argv)
 exit:
 	unload_shaders();
 	if (text_buf) C2D_TextBufDelete(text_buf);
+	if (top_target) C3D_RenderTargetDelete(top_target);
 	if (c2d_initialized) C2D_Fini();
 	if (c3d_initialized) C3D_Fini();
-	hidExit();
 	gfxExit();
 	return ok ? 0 : 1;
 }
