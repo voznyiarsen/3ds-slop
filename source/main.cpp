@@ -489,11 +489,9 @@ static void render_ui(void)
 
 static bool load_shaders(void)
 {
-	u32* aligned_shbin = (u32*)linearAlloc(cube_shbin_size);
-	if (!aligned_shbin) return false;
-	memcpy(aligned_shbin, cube_shbin, cube_shbin_size);
-	cube_dvlb = DVLB_ParseFile(aligned_shbin, cube_shbin_size);
-	linearFree(aligned_shbin);
+	// bin2s guarantees the array is aligned and statically allocated.
+	// DVLB retains pointers into this buffer, so it must live forever.
+	cube_dvlb = DVLB_ParseFile((u32*)cube_shbin, cube_shbin_size);
 	if (!cube_dvlb) return false;
 
 	if (R_FAILED(shaderProgramInit(&cube_program)))
