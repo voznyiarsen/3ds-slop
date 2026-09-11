@@ -158,7 +158,7 @@ static void configure_cube_state(void)
 {
 	C3D_BindProgram(&cube_program);
 	C3D_SetAttrInfo(&cube_attr_info);
-	C3D_DepthMap(true, -1.0f, 0.0f);
+	C3D_DepthMap(true, 0.5f, 0.5f);
 	C3D_DepthTest(true, GPU_LEQUAL, GPU_WRITE_ALL);
 	C3D_CullFace(GPU_CULL_NONE);
 
