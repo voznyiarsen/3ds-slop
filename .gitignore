@@ -1,9 +1,13 @@
-build/
 *.o
 *.d
 *.elf
 *.3dsx
-build/shaders/cube.s
+!build/
+!build/**
+!build/**/*.o
+!build/**/*.d
+!build/**/*.elf
+!build/**/*.3dsx
 source/shaders/cube.shbin
 # generated shader header in project root
 cube_shbin.h
