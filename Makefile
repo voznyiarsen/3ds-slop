@@ -27,6 +27,7 @@ $(BUILD)/$(TARGET).o: source/main.cpp cube_shbin.h
 cube_shbin.h $(BUILD)/shaders/cube.shbin.o &: $(BUILD)/shaders/cube.shbin
 	@mkdir -p $(dir $(BUILD)/shaders/cube.shbin.o)
 	bin2s -a 4 -H cube_shbin.h $< > $(BUILD)/shaders/cube.s
+	sed -i 's/extern const uint8_t/alignas(4) extern const uint8_t/g' cube_shbin.h
 	$(CC) -x assembler-with-cpp $(CFLAGS) -c $(BUILD)/shaders/cube.s -o $(BUILD)/shaders/cube.shbin.o
 
 $(BUILD)/shaders/cube.shbin: source/shaders/cube.v.pica

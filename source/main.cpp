@@ -1,11 +1,11 @@
 #include <3ds.h>
 #include <citro3d.h>
 #include <citro2d.h>
-#include <math.h>
 #include <cmath>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <algorithm>
 #include "cube_shbin.h"
 
 #define TOP_WIDTH 400.0f
@@ -17,6 +17,18 @@
 	(GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) | \
 	GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) | \
 	GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO))
+
+namespace Config {
+	constexpr float PICK_RADIUS = 24.0f;
+	constexpr float PICK_RADIUS_SQ = PICK_RADIUS * PICK_RADIUS;
+	constexpr float WIREFRAME_THICKNESS = 0.025f;
+	constexpr float POINT_SIZE = 0.055f;
+	constexpr float NEAR_PLANE = 0.1f;
+	constexpr float FAR_PLANE = 100.0f;
+	constexpr float DEADZONE = 15.0f;
+	constexpr float MOVE_SPEED = 0.1f;
+	constexpr float ROT_SPEED = 0.01f;
+}
 
 static DVLB_s* cube_dvlb = NULL;
 static shaderProgram_s cube_program;
@@ -118,6 +130,17 @@ static void build_model(C3D_Mtx* model)
 	Mtx_RotateZ(model, cube_rot_z, true);
 }
 
+// Cached per-frame matrices (performance: avoid rebuilding 3x per frame + 8x for picking)
+static C3D_Mtx g_model;
+static C3D_Mtx g_inv_model;
+static void update_cached_matrices(void)
+{
+	build_model(&g_model);
+	Mtx_Copy(&g_inv_model, &g_model);
+	if (fabsf(Mtx_Inverse(&g_inv_model)) < 0.00001f)
+		Mtx_Identity(&g_inv_model);
+}
+
 static void send_vertex(float x, float y, float z, float r, float g, float b)
 {
 	C3D_ImmSendAttrib(x, y, z, 1.0f);
@@ -145,10 +168,7 @@ static void configure_cube_state(void)
 
 static void render_cube_faces(void)
 {
-	C3D_Mtx model;
-	build_model(&model);
-
-	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &model);
+	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &g_model);
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
 
 	C3D_ImmDrawBegin(GPU_TRIANGLES);
@@ -159,16 +179,10 @@ static void render_cube_faces(void)
 
 static void render_cube_wireframe(void)
 {
-	C3D_Mtx model;
-	C3D_Mtx inverse_model;
-	build_model(&model);
-	Mtx_Copy(&inverse_model, &model);
-	if (fabsf(Mtx_Inverse(&inverse_model)) < 0.00001f) return;
-
 	Vec3 view_direction = {-cube_pos.x, -cube_pos.y, -cube_pos.z};
 	view_direction = vec3_normalized(view_direction, Vec3{0.0f, 0.0f, -1.0f});
 
-	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &model);
+	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &g_model);
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
 
 	C3D_ImmDrawBegin(GPU_TRIANGLES);
@@ -177,7 +191,7 @@ static void render_cube_wireframe(void)
 		Vertex* v0 = &cube_vertices[cube_edges[i].v0];
 		Vertex* v1 = &cube_vertices[cube_edges[i].v1];
 		Vec3 edge = {v1->x - v0->x, v1->y - v0->y, v1->z - v0->z};
-		C3D_FVec world_edge = Mtx_MultiplyFVec4(&model, FVec4_New(edge.x, edge.y, edge.z, 0.0f));
+		C3D_FVec world_edge = Mtx_MultiplyFVec4(&g_model, FVec4_New(edge.x, edge.y, edge.z, 0.0f));
 		Vec3 world_edge_vec = {world_edge.x, world_edge.y, world_edge.z};
 		float edge_len = vec3_length(world_edge_vec);
 		if (edge_len < 0.00001f) continue;
@@ -191,11 +205,11 @@ static void render_cube_wireframe(void)
 			normal = vec3_cross(e, reference);
 		}
 		normal = vec3_normalized(normal, Vec3{0.0f, 1.0f, 0.0f});
-		C3D_FVec local_normal = Mtx_MultiplyFVec4(&inverse_model, FVec4_New(normal.x, normal.y, normal.z, 0.0f));
+		C3D_FVec local_normal = Mtx_MultiplyFVec4(&g_inv_model, FVec4_New(normal.x, normal.y, normal.z, 0.0f));
 		Vec3 local_normal_vec = {local_normal.x, local_normal.y, local_normal.z};
 		local_normal_vec = vec3_normalized(local_normal_vec, Vec3{0.0f, 1.0f, 0.0f});
 
-		const float thickness = 0.025f;
+		const float thickness = Config::WIREFRAME_THICKNESS;
 		send_vertex(v0->x + local_normal_vec.x * thickness, v0->y + local_normal_vec.y * thickness, v0->z + local_normal_vec.z * thickness, v0->r, v0->g, v0->b);
 		send_vertex(v1->x + local_normal_vec.x * thickness, v1->y + local_normal_vec.y * thickness, v1->z + local_normal_vec.z * thickness, v1->r, v1->g, v1->b);
 		send_vertex(v0->x - local_normal_vec.x * thickness, v0->y - local_normal_vec.y * thickness, v0->z - local_normal_vec.z * thickness, v0->r, v0->g, v0->b);
@@ -208,18 +222,12 @@ static void render_cube_wireframe(void)
 
 static void render_cube_points(void)
 {
-	C3D_Mtx model;
-	C3D_Mtx inverse_model;
-	build_model(&model);
-	Mtx_Copy(&inverse_model, &model);
-	if (fabsf(Mtx_Inverse(&inverse_model)) < 0.00001f) return;
-
 	Vec3 view_direction = {-cube_pos.x, -cube_pos.y, -cube_pos.z};
 	view_direction = vec3_normalized(view_direction, Vec3{0.0f, 0.0f, -1.0f});
-	C3D_FVec local_view = Mtx_MultiplyFVec4(&inverse_model, FVec4_New(view_direction.x, view_direction.y, view_direction.z, 0.0f));
+	C3D_FVec local_view = Mtx_MultiplyFVec4(&g_inv_model, FVec4_New(view_direction.x, view_direction.y, view_direction.z, 0.0f));
 	Vec3 local_view_vec = {local_view.x, local_view.y, local_view.z};
 
-	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &model);
+	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &g_model);
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
 
 	C3D_ImmDrawBegin(GPU_TRIANGLES);
@@ -235,7 +243,7 @@ static void render_cube_points(void)
 		Vec3 up = vec3_cross(normal, right);
 		up = vec3_normalized(up, Vec3{0.0f, 1.0f, 0.0f});
 
-		const float size = 0.055f;
+		const float size = Config::POINT_SIZE;
 		float r = vertex->r;
 		float g = vertex->g;
 		float b = vertex->b;
@@ -273,7 +281,7 @@ static int find_closest_vertex(float tx, float ty)
 {
 	int closest = -1;
 	float best_z = 2.0f;
-	float closest_dist_sq = 24.0f * 24.0f;
+	float closest_dist_sq = Config::PICK_RADIUS_SQ;
 	bool found_in_radius = false;
 
 	for (int i = 0; i < 8; i++)
@@ -288,7 +296,7 @@ static int find_closest_vertex(float tx, float ty)
 		float dy = sy - ty;
 		float dist_sq = dx * dx + dy * dy;
 
-		if (dist_sq < 24.0f * 24.0f)
+		if (dist_sq < Config::PICK_RADIUS_SQ)
 		{
 			// Within pick radius: prefer nearest Z
 			if (!found_in_radius || ndc.z < best_z)
@@ -363,10 +371,10 @@ static void handle_input(u32 kDown, u32 kHeld)
 	float cx = (float)circle.dx;
 	float cy = (float)circle.dy;
 	float len = sqrtf(cx * cx + cy * cy);
-	const float deadzone = 15.0f;
+	const float deadzone = Config::DEADZONE;
 
-	float move_speed = 0.1f;
-	float rot_speed = 0.01f;
+	float move_speed = Config::MOVE_SPEED;
+	float rot_speed = Config::ROT_SPEED;
 
 	if (kHeld & KEY_DLEFT)  cube_pos.x -= move_speed;
 	if (kHeld & KEY_DRIGHT) cube_pos.x += move_speed;
@@ -399,9 +407,9 @@ static void handle_input(u32 kDown, u32 kHeld)
 	{
 		for (int i = 0; i < 8; i++)
 		{
-			cube_vertices[i].r = (float)(rand() % 100) / 100.0f;
-			cube_vertices[i].g = (float)(rand() % 100) / 100.0f;
-			cube_vertices[i].b = (float)(rand() % 100) / 100.0f;
+			cube_vertices[i].r = (float)rand() / (float)RAND_MAX;
+			cube_vertices[i].g = (float)rand() / (float)RAND_MAX;
+			cube_vertices[i].b = (float)rand() / (float)RAND_MAX;
 		}
 	}
 
@@ -451,27 +459,27 @@ static void render_ui(void)
 
 	char buf[256];
 
-	snprintf(buf, sizeof(buf), "Cube Manipulator");
-	draw_ui_text(text_buf, buf, 8.0f, 0.42f, 0xFFFFFFFF);
+	std::snprintf(buf, sizeof(buf), "Cube Manipulator");
+	draw_ui_text(text_buf, buf, 8.0f, 0.42f, C2D_Color32(255, 255, 255, 255));
 
-	snprintf(buf, sizeof(buf), "Pos: %.1f %.1f %.1f", cube_pos.x, cube_pos.y, cube_pos.z);
-	draw_ui_text(text_buf, buf, 30.0f, 0.34f, 0xFFFFFFFF);
+	std::snprintf(buf, sizeof(buf), "Pos: %.1f %.1f %.1f", cube_pos.x, cube_pos.y, cube_pos.z);
+	draw_ui_text(text_buf, buf, 30.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
 	const float rad_to_deg = 180.0f / 3.14159265f;
-	snprintf(buf, sizeof(buf), "Rot: %.1f %.1f %.1f deg", cube_rot_x * rad_to_deg, cube_rot_y * rad_to_deg, cube_rot_z * rad_to_deg);
-	draw_ui_text(text_buf, buf, 48.0f, 0.34f, 0xFFFFFFFF);
+	std::snprintf(buf, sizeof(buf), "Rot: %.1f %.1f %.1f deg", cube_rot_x * rad_to_deg, cube_rot_y * rad_to_deg, cube_rot_z * rad_to_deg);
+	draw_ui_text(text_buf, buf, 48.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
-	snprintf(buf, sizeof(buf), "Selected: %s", selected_vertex >= 0 ? vertex_names[selected_vertex] : "None");
-	draw_ui_text(text_buf, buf, 66.0f, 0.34f, 0xFFFFFFFF);
+	std::snprintf(buf, sizeof(buf), "Selected: %s", selected_vertex >= 0 ? vertex_names[selected_vertex] : "None");
+	draw_ui_text(text_buf, buf, 66.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
-	snprintf(buf, sizeof(buf), "D-pad: Move  Circle: Rotate");
-	draw_ui_text(text_buf, buf, 90.0f, 0.30f, 0xFF808080);
-	snprintf(buf, sizeof(buf), "Touch: Drag Vertex  X: Reset");
-	draw_ui_text(text_buf, buf, 108.0f, 0.30f, 0xFF808080);
-	snprintf(buf, sizeof(buf), "Y: Random Colors");
-	draw_ui_text(text_buf, buf, 126.0f, 0.30f, 0xFF808080);
+	std::snprintf(buf, sizeof(buf), "D-pad: Move  Circle: Rotate");
+	draw_ui_text(text_buf, buf, 90.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	std::snprintf(buf, sizeof(buf), "Touch: Drag Vertex  X: Reset");
+	draw_ui_text(text_buf, buf, 108.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	std::snprintf(buf, sizeof(buf), "Y: Random Colors");
+	draw_ui_text(text_buf, buf, 126.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 
-	draw_ui_text(text_buf, "Vertices:", 150.0f, 0.34f, 0xFFFFFFFF);
+	draw_ui_text(text_buf, "Vertices:", 150.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 	for (int i = 0; i < 8; i++)
 	{
 		float x = 8.0f + (i % 2) * 160.0f;
@@ -481,8 +489,8 @@ static void render_ui(void)
 		u8 cb = (u8)(cube_vertices[i].b * 255.0f);
 		u32 swatch_color = C2D_Color32(cr, cg, cb, 255);
 		C2D_DrawRectSolid(x, y + 2.0f, 0.5f, 7.0f, 7.0f, swatch_color);
-		u32 text_color = (i == selected_vertex) ? 0xFF00FFFF : 0xFFFFFFFF;
-		snprintf(buf, sizeof(buf), "%s %.1f %.1f %.1f", vertex_names[i], cube_vertices[i].x, cube_vertices[i].y, cube_vertices[i].z);
+		u32 text_color = (i == selected_vertex) ? C2D_Color32(0, 255, 255, 255) : C2D_Color32(255, 255, 255, 255);
+		std::snprintf(buf, sizeof(buf), "%s %.1f %.1f %.1f", vertex_names[i], cube_vertices[i].x, cube_vertices[i].y, cube_vertices[i].z);
 		draw_ui_text(text_buf, buf, y, 0.28f, text_color);
 	}
 }
@@ -563,7 +571,7 @@ int main(int argc, char** argv)
 	bot_target = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 	if (!bot_target) goto exit;
 
-	Mtx_PerspTilt(&proj_top, C3D_AngleFromDegrees(70.0f), C3D_AspectRatioTop, 0.1f, 100.0f, false);
+	Mtx_PerspTilt(&proj_top, C3D_AngleFromDegrees(70.0f), C3D_AspectRatioTop, Config::NEAR_PLANE, Config::FAR_PLANE, false);
 
 	text_buf = C2D_TextBufNew(8192);
 	if (!text_buf) goto exit;
@@ -577,6 +585,7 @@ int main(int argc, char** argv)
 		if (kDown & KEY_START) break;
 
 		handle_input(kDown, kHeld);
+		update_cached_matrices();
 
 		if (!C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) continue;
 
@@ -584,8 +593,8 @@ int main(int argc, char** argv)
 		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, 0x202020FF, 0);
 		configure_cube_state();
 		render_cube_faces();
-		// Overlay passes: disable depth test but only write color (prevent depth pollution)
-		C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
+		// Overlay passes: keep depth test (LEQUAL so co-planar passes) but only write color
+		C3D_DepthTest(true, GPU_LEQUAL, GPU_WRITE_COLOR);
 		render_cube_wireframe();
 		render_cube_points();
 
