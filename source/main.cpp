@@ -99,6 +99,10 @@ static C3D_Mtx proj_top;
 static C3D_Mtx proj_cpu; // Untilted projection for CPU 2D/3D math
 static C2D_TextBuf text_buf = NULL;
 
+constexpr size_t VERTEX_COUNT = sizeof(cube_vertices) / sizeof(cube_vertices[0]);
+constexpr size_t EDGE_COUNT = sizeof(cube_edges) / sizeof(cube_edges[0]);
+constexpr size_t FACE_INDEX_COUNT = sizeof(cube_faces) / sizeof(cube_faces[0]);
+
 static Vec3 vec3_cross(Vec3 a, Vec3 b)
 {
 	Vec3 result = {
@@ -124,6 +128,31 @@ static Vec3 vec3_normalized(Vec3 v, Vec3 fallback)
 	return v;
 }
 
+static float wrap_angle(float a)
+{
+	const float two_pi = 2.0f * 3.14159265f;
+	a = fmodf(a, two_pi);
+	if (a < -3.14159265f) a += two_pi;
+	else if (a > 3.14159265f) a -= two_pi;
+	return a;
+}
+
+static void hsv_to_rgb(float h, float s, float v, float* r, float* g, float* b)
+{
+	float c = v * s;
+	float hh = h / 60.0f;
+	float x = c * (1.0f - fabsf(fmodf(hh, 2.0f) - 1.0f));
+	float m = v - c;
+	float rp=0, gp=0, bp=0;
+	if (hh < 1.0f) { rp=c; gp=x; bp=0; }
+	else if (hh < 2.0f) { rp=x; gp=c; bp=0; }
+	else if (hh < 3.0f) { rp=0; gp=c; bp=x; }
+	else if (hh < 4.0f) { rp=0; gp=x; bp=c; }
+	else if (hh < 5.0f) { rp=x; gp=0; bp=c; }
+	else { rp=c; gp=0; bp=x; }
+	*r = rp + m; *g = gp + m; *b = bp + m;
+}
+
 static void build_model(C3D_Mtx* model)
 {
 	Mtx_Identity(model);
@@ -136,13 +165,23 @@ static void build_model(C3D_Mtx* model)
 // Cached per-frame matrices (performance: avoid rebuilding 3x per frame + 8x for picking)
 static C3D_Mtx g_model;
 static C3D_Mtx g_inv_model;
+static C3D_Mtx g_combined;
+static C3D_Mtx g_inv_combined;
+static bool g_matrices_dirty = true;
 static void update_cached_matrices(void)
 {
+	if (!g_matrices_dirty) return;
 	build_model(&g_model);
+	Mtx_Multiply(&g_combined, &proj_cpu, &g_model);
+	Mtx_Copy(&g_inv_combined, &g_combined);
+	if (fabsf(Mtx_Inverse(&g_inv_combined)) < 0.0001f)
+		Mtx_Identity(&g_inv_combined);
 	Mtx_Copy(&g_inv_model, &g_model);
 	if (fabsf(Mtx_Inverse(&g_inv_model)) < 0.00001f)
 		Mtx_Identity(&g_inv_model);
+	g_matrices_dirty = false;
 }
+static inline void mark_matrices_dirty(void) { g_matrices_dirty = true; }
 
 static void send_vertex(float x, float y, float z, float r, float g, float b)
 {
@@ -352,6 +391,7 @@ static void move_selected_vertex(float dx, float dy)
 	cube_vertices[selected_vertex].x = local.x;
 	cube_vertices[selected_vertex].y = local.y;
 	cube_vertices[selected_vertex].z = local.z;
+	mark_matrices_dirty();
 }
 
 static float touch_to_top_x(float x)
@@ -370,21 +410,29 @@ static void handle_input(u32 kDown, u32 kHeld)
 
 	float move_speed = Config::MOVE_SPEED;
 	float rot_speed = Config::ROT_SPEED;
+	bool pos_changed = false;
 
-	if (kHeld & KEY_DLEFT)  cube_pos.x -= move_speed;
-	if (kHeld & KEY_DRIGHT) cube_pos.x += move_speed;
-	if (kHeld & KEY_DUP)    cube_pos.y += move_speed;
-	if (kHeld & KEY_DDOWN)  cube_pos.y -= move_speed;
-	if (kHeld & KEY_L)      cube_pos.z += move_speed;
-	if (kHeld & KEY_R)      cube_pos.z -= move_speed;
+	if (kHeld & KEY_DLEFT)  { cube_pos.x -= move_speed; pos_changed = true; }
+	if (kHeld & KEY_DRIGHT) { cube_pos.x += move_speed; pos_changed = true; }
+	if (kHeld & KEY_DUP)    { cube_pos.y += move_speed; pos_changed = true; }
+	if (kHeld & KEY_DDOWN)  { cube_pos.y -= move_speed; pos_changed = true; }
+	if (kHeld & KEY_L)      { cube_pos.z += move_speed; pos_changed = true; }
+	if (kHeld & KEY_R)      { cube_pos.z -= move_speed; pos_changed = true; }
 
 	if (len > deadzone)
 	{
+		float magnitude = (len - deadzone) / (32767.0f - deadzone);
+		magnitude = std::min(magnitude, 1.0f);
 		float nx = cx / len;
 		float ny = cy / len;
-		cube_rot_y += nx * rot_speed;
-		cube_rot_x += ny * rot_speed;
+		cube_rot_y += nx * rot_speed * magnitude;
+		cube_rot_x += ny * rot_speed * magnitude;
+		cube_rot_x = wrap_angle(cube_rot_x);
+		cube_rot_y = wrap_angle(cube_rot_y);
+		cube_rot_z = wrap_angle(cube_rot_z);
+		pos_changed = true;
 	}
+	if (pos_changed) mark_matrices_dirty();
 
 	if (kDown & KEY_X)
 	{
@@ -396,17 +444,25 @@ static void handle_input(u32 kDown, u32 kHeld)
 		cube_pos.z = -8.0f;
 		selected_vertex = -1;
 		touch_active = false;
+		mark_matrices_dirty();
 	}
 
 	if (kDown & KEY_Y)
 	{
 		for (int i = 0; i < 8; i++)
 		{
-			cube_vertices[i].r = (float)rand() / (float)RAND_MAX;
-			cube_vertices[i].g = (float)rand() / (float)RAND_MAX;
-			cube_vertices[i].b = (float)rand() / (float)RAND_MAX;
+			float h = (float)rand() / (float)RAND_MAX * 360.0f;
+			float r,g,b;
+			hsv_to_rgb(h, 0.8f, 0.9f, &r, &g, &b);
+			cube_vertices[i].r = r;
+			cube_vertices[i].g = g;
+			cube_vertices[i].b = b;
 		}
+		mark_matrices_dirty();
 	}
+
+	// Ensure matrices are up-to-date for picking
+	if (g_matrices_dirty) update_cached_matrices();
 
 	touchPosition touch;
 	if (kHeld & KEY_TOUCH)
@@ -577,7 +633,12 @@ int main(int argc, char** argv)
 		hidScanInput();
 		u32 kDown = hidKeysDown();
 		u32 kHeld = hidKeysHeld();
-		if (kDown & KEY_START) break;
+		if (kDown & KEY_START)
+		{
+			selected_vertex = -1;
+			touch_active = false;
+			break;
+		}
 
 		handle_input(kDown, kHeld);
 		update_cached_matrices();

@@ -37,6 +37,11 @@ $(BUILD)/shaders/cube.shbin: source/shaders/cube.v.pica
 $(BUILD)/$(TARGET).3dsx: $(BUILD)/$(TARGET).elf
 	3dsxtool $< $@
 
+DEPS := $(BUILD)/$(TARGET).d $(BUILD)/shaders/cube.shbin.d
+-include $(DEPS)
+
+.DELETE_ON_ERROR:
+
 clean:
 	rm -rf $(BUILD) cube_shbin.h
 
