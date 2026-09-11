@@ -96,6 +96,7 @@ static bool touch_active = false;
 static C3D_RenderTarget* top_target = NULL;
 static C3D_RenderTarget* bot_target = NULL;
 static C3D_Mtx proj_top;
+static C3D_Mtx proj_cpu; // Untilted projection for CPU 2D/3D math
 static C2D_TextBuf text_buf = NULL;
 
 static Vec3 vec3_cross(Vec3 a, Vec3 b)
@@ -271,7 +272,7 @@ static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* ndc, float* clip
 	C3D_Mtx model;
 	build_model(&model);
 	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
-	C3D_FVec clip = Mtx_MultiplyFVec4(&proj_top, world);
+	C3D_FVec clip = Mtx_MultiplyFVec4(&proj_cpu, world);
 	if (clip.w <= 0.0001f) return false;
 	if (clip_w) *clip_w = clip.w;
 	*ndc = FVec4_PerspDivide(clip);
@@ -327,7 +328,7 @@ static void move_selected_vertex(float dx, float dy)
 	C3D_Mtx combined;
 	C3D_Mtx inverse_combined;
 	build_model(&model);
-	Mtx_Multiply(&combined, &proj_top, &model);
+	Mtx_Multiply(&combined, &proj_cpu, &model);
 	Mtx_Copy(&inverse_combined, &combined);
 	if (fabsf(Mtx_Inverse(&inverse_combined)) < 0.0001f) return;
 
@@ -565,6 +566,7 @@ int main(int argc, char** argv)
 	if (!bot_target) goto exit;
 
 	Mtx_PerspTilt(&proj_top, C3D_AngleFromDegrees(70.0f), C3D_AspectRatioTop, Config::NEAR_PLANE, Config::FAR_PLANE, false);
+	Mtx_Persp(&proj_cpu, C3D_AngleFromDegrees(70.0f), C3D_AspectRatioTop, Config::NEAR_PLANE, Config::FAR_PLANE, false);
 
 	text_buf = C2D_TextBufNew(8192);
 	if (!text_buf) goto exit;
