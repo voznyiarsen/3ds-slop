@@ -2,6 +2,7 @@
 #include <citro3d.h>
 #include <citro2d.h>
 #include <math.h>
+#include <cmath>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -271,8 +272,9 @@ static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* ndc, float* clip
 static int find_closest_vertex(float tx, float ty)
 {
 	int closest = -1;
-	float closest_dist_sq = 24.0f * 24.0f;
 	float best_z = 2.0f;
+	float closest_dist_sq = 24.0f * 24.0f;
+	bool found_in_radius = false;
 
 	for (int i = 0; i < 8; i++)
 	{
@@ -285,16 +287,21 @@ static int find_closest_vertex(float tx, float ty)
 		float dx = sx - tx;
 		float dy = sy - ty;
 		float dist_sq = dx * dx + dy * dy;
-		if (dist_sq < closest_dist_sq)
+
+		if (dist_sq < 24.0f * 24.0f)
 		{
-			closest_dist_sq = dist_sq;
-			best_z = ndc.z;
-			closest = i;
+			// Within pick radius: prefer nearest Z
+			if (!found_in_radius || ndc.z < best_z)
+			{
+				found_in_radius = true;
+				best_z = ndc.z;
+				closest = i;
+			}
 		}
-		else if (dist_sq < 24.0f * 24.0f && ndc.z < best_z)
+		else if (!found_in_radius && dist_sq < closest_dist_sq)
 		{
-			// Prefer nearer depth (smaller NDC z) among ties within radius
-			best_z = ndc.z;
+			// Outside pick radius, but no vertex found yet: track closest 2D
+			closest_dist_sq = dist_sq;
 			closest = i;
 		}
 	}
@@ -334,7 +341,7 @@ static void move_selected_vertex(float dx, float dy)
 	C3D_FVec local = Mtx_MultiplyFVec4(&inverse_combined, clip);
 	if (fabsf(local.w) < 0.0001f) return;
 	local = FVec4_PerspDivide(local);
-	if (!isfinite(local.x) || !isfinite(local.y) || !isfinite(local.z)) return;
+	if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z)) return;
 	// Prevent dragging behind near plane
 	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(local.x, local.y, local.z, 1.0f));
 	if (world.z > -0.1f) return;
@@ -370,8 +377,10 @@ static void handle_input(u32 kDown, u32 kHeld)
 
 	if (len > deadzone)
 	{
-		cube_rot_y += cx * rot_speed;
-		cube_rot_x += cy * rot_speed;
+		float nx = cx / len;
+		float ny = cy / len;
+		cube_rot_y += nx * rot_speed;
+		cube_rot_x += ny * rot_speed;
 	}
 
 	if (kDown & KEY_X)
