@@ -1,0 +1,8 @@
+build/
+cube_shbin.h
+*.o
+*.d
+*.elf
+*.3dsx
+cube_shbin.h
+build/shaders/cube.s
