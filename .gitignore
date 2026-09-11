@@ -1,5 +1,4 @@
 build/
-cube_shbin.h
 *.o
 *.d
 *.elf

@@ -245,6 +245,14 @@ static void render_cube_points(void)
 	C3D_FVec local_view = Mtx_MultiplyFVec4(&g_inv_model, FVec4_New(view_direction.x, view_direction.y, view_direction.z, 0.0f));
 	Vec3 local_view_vec = {local_view.x, local_view.y, local_view.z};
 
+	// Hoist billboard basis (constant for all points)
+	Vec3 normal = vec3_normalized(local_view_vec, Vec3{0.0f, 0.0f, 1.0f});
+	Vec3 reference = {0.0f, 0.0f, 1.0f};
+	if (fabsf(normal.x * reference.x + normal.y * reference.y + normal.z * reference.z) > 0.9f)
+		reference = Vec3{0.0f, 1.0f, 0.0f};
+	Vec3 right = vec3_normalized(vec3_cross(normal, reference), Vec3{1.0f, 0.0f, 0.0f});
+	Vec3 up = vec3_normalized(vec3_cross(normal, right), Vec3{0.0f, 1.0f, 0.0f});
+
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_modelView, &g_model);
 	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &proj_top);
 
@@ -252,14 +260,6 @@ static void render_cube_points(void)
 	for (int i = 0; i < 8; i++)
 	{
 		Vertex* vertex = &cube_vertices[i];
-		Vec3 normal = vec3_normalized(local_view_vec, Vec3{0.0f, 0.0f, 1.0f});
-		Vec3 reference = {0.0f, 0.0f, 1.0f};
-		if (fabsf(normal.x * reference.x + normal.y * reference.y + normal.z * reference.z) > 0.9f)
-			reference = Vec3{0.0f, 1.0f, 0.0f};
-		Vec3 right = vec3_cross(normal, reference);
-		right = vec3_normalized(right, Vec3{1.0f, 0.0f, 0.0f});
-		Vec3 up = vec3_cross(normal, right);
-		up = vec3_normalized(up, Vec3{0.0f, 1.0f, 0.0f});
 
 		const float size = Config::POINT_SIZE;
 		float r = vertex->r;
@@ -297,7 +297,7 @@ static int find_closest_vertex(float tx, float ty)
 {
 	int closest = -1;
 	float best_z = 2.0f;
-	float closest_dist_sq = Config::PICK_RADIUS_SQ;
+	float closest_dist_sq = INFINITY;
 	bool found_in_radius = false;
 
 	for (int i = 0; i < 8; i++)
@@ -345,11 +345,9 @@ static void move_selected_vertex(float dx, float dy)
 	float current_sy = (0.5f - ndc.y * 0.5f) * TOP_HEIGHT;
 	float old_clip_z = ndc.z * clip_w;
 
-	C3D_Mtx model;
 	C3D_Mtx combined;
 	C3D_Mtx inverse_combined;
-	build_model(&model);
-	Mtx_Multiply(&combined, &proj_top, &model);
+	Mtx_Multiply(&combined, &proj_top, &g_model);
 	Mtx_Copy(&inverse_combined, &combined);
 	if (fabsf(Mtx_Inverse(&inverse_combined)) < 0.0001f) return;
 
@@ -367,7 +365,7 @@ static void move_selected_vertex(float dx, float dy)
 	local = FVec4_PerspDivide(local);
 	if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z)) return;
 	// Prevent dragging outside view frustum (near/far planes)
-	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(local.x, local.y, local.z, 1.0f));
+	C3D_FVec world = Mtx_MultiplyFVec4(&g_model, FVec4_New(local.x, local.y, local.z, 1.0f));
 	if (world.z > -Config::NEAR_PLANE || world.z < -Config::FAR_PLANE) return;
 
 	cube_vertices[selected_vertex].x = local.x;
@@ -464,10 +462,10 @@ static void handle_input(u32 kDown, u32 kHeld)
 	}
 }
 
-static void draw_ui_text(C2D_TextBuf buf, const char* text, float y, float scale, u32 color)
+static void draw_ui_text(const char* text, float y, float scale, u32 color)
 {
 	C2D_Text ui_text;
-	C2D_TextParse(&ui_text, buf, text);
+	C2D_TextParse(&ui_text, text_buf, text);
 	C2D_TextOptimize(&ui_text);
 	C2D_DrawText(&ui_text, C2D_WithColor, 8.0f, y, 0.5f, scale, scale, color);
 }
@@ -479,26 +477,26 @@ static void render_ui(void)
 	char buf[256];
 
 	std::snprintf(buf, sizeof(buf), "Cube Manipulator");
-	draw_ui_text(text_buf, buf, 8.0f, 0.42f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 8.0f, 0.42f, C2D_Color32(255, 255, 255, 255));
 
 	std::snprintf(buf, sizeof(buf), "Pos: %.1f %.1f %.1f", cube_pos.x, cube_pos.y, cube_pos.z);
-	draw_ui_text(text_buf, buf, 30.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 30.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
 	const float rad_to_deg = 180.0f / 3.14159265f;
 	std::snprintf(buf, sizeof(buf), "Rot: %.1f %.1f %.1f deg", cube_rot_x * rad_to_deg, cube_rot_y * rad_to_deg, cube_rot_z * rad_to_deg);
-	draw_ui_text(text_buf, buf, 48.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 48.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
 	std::snprintf(buf, sizeof(buf), "Selected: %s", selected_vertex >= 0 ? vertex_names[selected_vertex] : "None");
-	draw_ui_text(text_buf, buf, 66.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 66.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
 	std::snprintf(buf, sizeof(buf), "D-pad: Move  Circle: Rotate");
-	draw_ui_text(text_buf, buf, 90.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	draw_ui_text(buf, 90.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 	std::snprintf(buf, sizeof(buf), "Touch: Drag Vertex  X: Reset");
-	draw_ui_text(text_buf, buf, 108.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	draw_ui_text(buf, 108.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 	std::snprintf(buf, sizeof(buf), "Y: Random Colors");
-	draw_ui_text(text_buf, buf, 126.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	draw_ui_text(buf, 126.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 
-	draw_ui_text(text_buf, "Vertices:", 150.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text("Vertices:", 150.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 	for (int i = 0; i < 8; i++)
 	{
 		float x = 8.0f + (i % 2) * 160.0f;
@@ -510,7 +508,7 @@ static void render_ui(void)
 		C2D_DrawRectSolid(x, y + 2.0f, 0.5f, 7.0f, 7.0f, swatch_color);
 		u32 text_color = (i == selected_vertex) ? C2D_Color32(0, 255, 255, 255) : C2D_Color32(255, 255, 255, 255);
 		std::snprintf(buf, sizeof(buf), "%s %.1f %.1f %.1f", vertex_names[i], cube_vertices[i].x, cube_vertices[i].y, cube_vertices[i].z);
-		draw_ui_text(text_buf, buf, y, 0.28f, text_color);
+		draw_ui_text(buf, y, 0.28f, text_color);
 	}
 }
 
@@ -570,7 +568,6 @@ int main(int argc, char** argv)
 	srand((unsigned)svcGetSystemTick());
 
 	gfxInitDefault();
-	hidSetRepeatParameters(20, 10);
 
 	bool c3d_initialized = false;
 	bool c2d_initialized = false;
@@ -603,13 +600,13 @@ int main(int argc, char** argv)
 		u32 kHeld = hidKeysHeld();
 		if (kDown & KEY_START) break;
 
-		handle_input(kDown, kHeld);
 		update_cached_matrices();
+		handle_input(kDown, kHeld);
 
 		if (!C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) continue;
 
 		C3D_FrameDrawOn(top_target);
-		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, 0x202020FF, 0);
+		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, C2D_Color32(0x20, 0x20, 0x20, 0xFF), 0);
 		configure_cube_state();
 		render_cube_faces();
 		// Overlay passes: keep depth test (LEQUAL so co-planar passes) but only write color
