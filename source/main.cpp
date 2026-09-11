@@ -55,6 +55,24 @@ typedef struct {
 	float x, y, z;
 } Vec3;
 
+// Encapsulated cube state for better modularity (future refactor)
+struct Cube {
+	Vertex vertices[8];
+	Vec3 pos;
+	float rot_x, rot_y, rot_z;
+	C3D_Mtx model;
+	C3D_Mtx inv_model;
+	void update_matrices() {
+		Mtx_Identity(&model);
+		Mtx_Translate(&model, pos.x, pos.y, pos.z, true);
+		Mtx_RotateX(&model, rot_x, true);
+		Mtx_RotateY(&model, rot_y, true);
+		Mtx_RotateZ(&model, rot_z, true);
+		Mtx_Copy(&inv_model, &model);
+		if (fabsf(Mtx_Inverse(&inv_model)) < 0.00001f) Mtx_Identity(&inv_model);
+	}
+};
+
 static Vertex cube_vertices[8] = {
 	{-1.0f, -1.0f, -1.0f, 1.0f, 0.0f, 0.0f},
 	{ 1.0f, -1.0f, -1.0f, 0.0f, 1.0f, 0.0f},
@@ -266,10 +284,8 @@ static void render_cube_points(void)
 
 static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* ndc, float* clip_w)
 {
-	C3D_Mtx model;
-	build_model(&model);
-
-	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
+	// Use cached g_model for performance (avoids rebuilding 9x per frame during picking)
+	C3D_FVec world = Mtx_MultiplyFVec4(&g_model, FVec4_New(vertex->x, vertex->y, vertex->z, 1.0f));
 	C3D_FVec clip = Mtx_MultiplyFVec4(&proj_top, world);
 	if (clip.w <= 0.0001f) return false;
 	if (clip_w) *clip_w = clip.w;
@@ -350,9 +366,9 @@ static void move_selected_vertex(float dx, float dy)
 	if (fabsf(local.w) < 0.0001f) return;
 	local = FVec4_PerspDivide(local);
 	if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z)) return;
-	// Prevent dragging behind near plane
+	// Prevent dragging outside view frustum (near/far planes)
 	C3D_FVec world = Mtx_MultiplyFVec4(&model, FVec4_New(local.x, local.y, local.z, 1.0f));
-	if (world.z > -0.1f) return;
+	if (world.z > -Config::NEAR_PLANE || world.z < -Config::FAR_PLANE) return;
 
 	cube_vertices[selected_vertex].x = local.x;
 	cube_vertices[selected_vertex].y = local.y;
@@ -412,6 +428,9 @@ static void handle_input(u32 kDown, u32 kHeld)
 			cube_vertices[i].b = (float)rand() / (float)RAND_MAX;
 		}
 	}
+
+	// Ensure cached matrices are up-to-date for picking (avoids stale g_model)
+	update_cached_matrices();
 
 	if (kDown & KEY_TOUCH)
 	{
@@ -484,9 +503,9 @@ static void render_ui(void)
 	{
 		float x = 8.0f + (i % 2) * 160.0f;
 		float y = 168.0f + (i / 2) * 18.0f;
-		u8 cr = (u8)(cube_vertices[i].r * 255.0f);
-		u8 cg = (u8)(cube_vertices[i].g * 255.0f);
-		u8 cb = (u8)(cube_vertices[i].b * 255.0f);
+		u8 cr = (u8)(std::max(0.0f, std::min(cube_vertices[i].r * 255.0f, 255.0f)));
+		u8 cg = (u8)(std::max(0.0f, std::min(cube_vertices[i].g * 255.0f, 255.0f)));
+		u8 cb = (u8)(std::max(0.0f, std::min(cube_vertices[i].b * 255.0f, 255.0f)));
 		u32 swatch_color = C2D_Color32(cr, cg, cb, 255);
 		C2D_DrawRectSolid(x, y + 2.0f, 0.5f, 7.0f, 7.0f, swatch_color);
 		u32 text_color = (i == selected_vertex) ? C2D_Color32(0, 255, 255, 255) : C2D_Color32(255, 255, 255, 255);
