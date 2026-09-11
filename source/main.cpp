@@ -173,9 +173,9 @@ static void render_cube_wireframe(void)
 	C3D_ImmDrawBegin(GPU_TRIANGLES);
 	for (int i = 0; i < 12; i++)
 	{
-		Vertex* a = &cube_vertices[cube_edges[i].v0];
-		Vertex* b = &cube_vertices[cube_edges[i].v1];
-		Vec3 edge = {b->x - a->x, b->y - a->y, b->z - a->z};
+		Vertex* v0 = &cube_vertices[cube_edges[i].v0];
+		Vertex* v1 = &cube_vertices[cube_edges[i].v1];
+		Vec3 edge = {v1->x - v0->x, v1->y - v0->y, v1->z - v0->z};
 		C3D_FVec world_edge = Mtx_MultiplyFVec4(&model, FVec4_New(edge.x, edge.y, edge.z, 0.0f));
 		Vec3 world_edge_vec = {world_edge.x, world_edge.y, world_edge.z};
 		float edge_len = vec3_length(world_edge_vec);
@@ -195,12 +195,12 @@ static void render_cube_wireframe(void)
 		local_normal_vec = vec3_normalized(local_normal_vec, Vec3{0.0f, 1.0f, 0.0f});
 
 		const float thickness = 0.025f;
-		send_vertex(a->x + local_normal_vec.x * thickness, a->y + local_normal_vec.y * thickness, a->z + local_normal_vec.z * thickness, a->r, a->g, a->b);
-		send_vertex(b->x + local_normal_vec.x * thickness, b->y + local_normal_vec.y * thickness, b->z + local_normal_vec.z * thickness, b->r, b->g, b->b);
-		send_vertex(a->x - local_normal_vec.x * thickness, a->y - local_normal_vec.y * thickness, a->z - local_normal_vec.z * thickness, a->r, a->g, a->b);
-		send_vertex(b->x + local_normal_vec.x * thickness, b->y + local_normal_vec.y * thickness, b->z + local_normal_vec.z * thickness, b->r, b->g, b->b);
-		send_vertex(b->x - local_normal_vec.x * thickness, b->y - local_normal_vec.y * thickness, b->z - local_normal_vec.z * thickness, b->r, b->g, b->b);
-		send_vertex(a->x - local_normal_vec.x * thickness, a->y - local_normal_vec.y * thickness, a->z - local_normal_vec.z * thickness, a->r, a->g, a->b);
+		send_vertex(v0->x + local_normal_vec.x * thickness, v0->y + local_normal_vec.y * thickness, v0->z + local_normal_vec.z * thickness, v0->r, v0->g, v0->b);
+		send_vertex(v1->x + local_normal_vec.x * thickness, v1->y + local_normal_vec.y * thickness, v1->z + local_normal_vec.z * thickness, v1->r, v1->g, v1->b);
+		send_vertex(v0->x - local_normal_vec.x * thickness, v0->y - local_normal_vec.y * thickness, v0->z - local_normal_vec.z * thickness, v0->r, v0->g, v0->b);
+		send_vertex(v1->x + local_normal_vec.x * thickness, v1->y + local_normal_vec.y * thickness, v1->z + local_normal_vec.z * thickness, v1->r, v1->g, v1->b);
+		send_vertex(v1->x - local_normal_vec.x * thickness, v1->y - local_normal_vec.y * thickness, v1->z - local_normal_vec.z * thickness, v1->r, v1->g, v1->b);
+		send_vertex(v0->x - local_normal_vec.x * thickness, v0->y - local_normal_vec.y * thickness, v0->z - local_normal_vec.z * thickness, v0->r, v0->g, v0->b);
 	}
 	C3D_ImmDrawEnd();
 }
@@ -268,35 +268,11 @@ static bool project_vertex_clip(const Vertex* vertex, C3D_FVec* ndc, float* clip
 	return true;
 }
 
-static bool __attribute__((unused)) project_vertex(const Vertex* vertex, float* sx, float* sy)
-{
-	C3D_FVec ndc;
-	if (!project_vertex_clip(vertex, &ndc, NULL)) return false;
-
-	*sx = (ndc.x * 0.5f + 0.5f) * TOP_WIDTH;
-	*sy = (0.5f - ndc.y * 0.5f) * TOP_HEIGHT;
-	return true;
-}
-
-static bool __attribute__((unused)) screen_to_local(float sx, float sy, float reference_z, const C3D_Mtx* inverse_matrix, Vec3* local)
-{
-	float ndc_x = sx / TOP_WIDTH * 2.0f - 1.0f;
-	float ndc_y = 1.0f - sy / TOP_HEIGHT * 2.0f;
-	C3D_FVec clip = Mtx_MultiplyFVec4(inverse_matrix, FVec4_New(ndc_x, ndc_y, reference_z, 1.0f));
-	if (fabsf(clip.w) < 0.0001f) return false;
-
-	clip = FVec4_PerspDivide(clip);
-	local->x = clip.x;
-	local->y = clip.y;
-	local->z = clip.z;
-	return true;
-}
-
 static int find_closest_vertex(float tx, float ty)
 {
 	int closest = -1;
 	float closest_dist_sq = 24.0f * 24.0f;
-	float best_z = -2.0f;
+	float best_z = 2.0f;
 
 	for (int i = 0; i < 8; i++)
 	{
@@ -315,9 +291,9 @@ static int find_closest_vertex(float tx, float ty)
 			best_z = ndc.z;
 			closest = i;
 		}
-		else if (dist_sq < 24.0f * 24.0f && ndc.z > best_z)
+		else if (dist_sq < 24.0f * 24.0f && ndc.z < best_z)
 		{
-			// Prefer nearer depth among ties within radius
+			// Prefer nearer depth (smaller NDC z) among ties within radius
 			best_z = ndc.z;
 			closest = i;
 		}
@@ -377,6 +353,10 @@ static void handle_input(u32 kDown, u32 kHeld)
 {
 	circlePosition circle;
 	hidCircleRead(&circle);
+	float cx = (float)circle.dx;
+	float cy = (float)circle.dy;
+	float len = sqrtf(cx * cx + cy * cy);
+	const float deadzone = 15.0f;
 
 	float move_speed = 0.1f;
 	float rot_speed = 0.01f;
@@ -388,8 +368,11 @@ static void handle_input(u32 kDown, u32 kHeld)
 	if (kHeld & KEY_L)      cube_pos.z += move_speed;
 	if (kHeld & KEY_R)      cube_pos.z -= move_speed;
 
-	cube_rot_y += circle.dx * rot_speed;
-	cube_rot_x += circle.dy * rot_speed;
+	if (len > deadzone)
+	{
+		cube_rot_y += cx * rot_speed;
+		cube_rot_x += cy * rot_speed;
+	}
 
 	if (kDown & KEY_X)
 	{
@@ -465,7 +448,8 @@ static void render_ui(void)
 	snprintf(buf, sizeof(buf), "Pos: %.1f %.1f %.1f", cube_pos.x, cube_pos.y, cube_pos.z);
 	draw_ui_text(text_buf, buf, 30.0f, 0.34f, 0xFFFFFFFF);
 
-	snprintf(buf, sizeof(buf), "Rot: %.1f %.1f %.1f", cube_rot_x, cube_rot_y, cube_rot_z);
+	const float rad_to_deg = 180.0f / 3.14159265f;
+	snprintf(buf, sizeof(buf), "Rot: %.1f %.1f %.1f deg", cube_rot_x * rad_to_deg, cube_rot_y * rad_to_deg, cube_rot_z * rad_to_deg);
 	draw_ui_text(text_buf, buf, 48.0f, 0.34f, 0xFFFFFFFF);
 
 	snprintf(buf, sizeof(buf), "Selected: %s", selected_vertex >= 0 ? vertex_names[selected_vertex] : "None");
@@ -483,16 +467,24 @@ static void render_ui(void)
 	{
 		float x = 8.0f + (i % 2) * 160.0f;
 		float y = 168.0f + (i / 2) * 18.0f;
-		u32 color = (i == selected_vertex) ? 0xFF00FFFF : 0xFF808080;
-		C2D_DrawRectSolid(x, y + 2.0f, 0.5f, 7.0f, 7.0f, color);
+		u8 cr = (u8)(cube_vertices[i].r * 255.0f);
+		u8 cg = (u8)(cube_vertices[i].g * 255.0f);
+		u8 cb = (u8)(cube_vertices[i].b * 255.0f);
+		u32 swatch_color = C2D_Color32(cr, cg, cb, 255);
+		C2D_DrawRectSolid(x, y + 2.0f, 0.5f, 7.0f, 7.0f, swatch_color);
+		u32 text_color = (i == selected_vertex) ? 0xFF00FFFF : 0xFFFFFFFF;
 		snprintf(buf, sizeof(buf), "%s %.1f %.1f %.1f", vertex_names[i], cube_vertices[i].x, cube_vertices[i].y, cube_vertices[i].z);
-		draw_ui_text(text_buf, buf, y, 0.28f, color);
+		draw_ui_text(text_buf, buf, y, 0.28f, text_color);
 	}
 }
 
 static bool load_shaders(void)
 {
-	cube_dvlb = DVLB_ParseFile((u32*)cube_shbin, cube_shbin_size);
+	u32* aligned_shbin = (u32*)linearAlloc(cube_shbin_size);
+	if (!aligned_shbin) return false;
+	memcpy(aligned_shbin, cube_shbin, cube_shbin_size);
+	cube_dvlb = DVLB_ParseFile(aligned_shbin, cube_shbin_size);
+	linearFree(aligned_shbin);
 	if (!cube_dvlb) return false;
 
 	if (R_FAILED(shaderProgramInit(&cube_program)))
@@ -585,8 +577,8 @@ int main(int argc, char** argv)
 		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, 0x202020FF, 0);
 		configure_cube_state();
 		render_cube_faces();
-		// Overlay passes: disable depth to avoid half-culled ribbons/markers and allow back-vertex picking
-		C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
+		// Overlay passes: disable depth test but only write color (prevent depth pollution)
+		C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
 		render_cube_wireframe();
 		render_cube_points();
 
