@@ -159,7 +159,7 @@ static void configure_cube_state(void)
 	C3D_BindProgram(&cube_program);
 	C3D_SetAttrInfo(&cube_attr_info);
 	C3D_DepthMap(true, -1.0f, 0.0f);
-	C3D_DepthTest(true, GPU_GEQUAL, GPU_WRITE_ALL);
+	C3D_DepthTest(true, GPU_LEQUAL, GPU_WRITE_ALL);
 	C3D_CullFace(GPU_CULL_NONE);
 
 	C3D_TexEnv* env = C3D_GetTexEnv(0);
@@ -282,7 +282,6 @@ static int find_closest_vertex(float tx, float ty)
 {
 	int closest = -1;
 	float best_z = 2.0f;
-	float closest_dist_sq = INFINITY;
 	bool found_in_radius = false;
 
 	for (int i = 0; i < 8; i++)
@@ -306,12 +305,6 @@ static int find_closest_vertex(float tx, float ty)
 				best_z = ndc.z;
 				closest = i;
 			}
-		}
-		else if (!found_in_radius && dist_sq < closest_dist_sq)
-		{
-			// Outside pick radius, but no vertex found yet: track closest 2D
-			closest_dist_sq = dist_sq;
-			closest = i;
 		}
 	}
 
@@ -446,12 +439,12 @@ static void handle_input(u32 kDown, u32 kHeld)
 	}
 }
 
-static void draw_ui_text(const char* text, float y, float scale, u32 color)
+static void draw_ui_text(const char* text, float x, float y, float scale, u32 color)
 {
 	C2D_Text ui_text;
 	C2D_TextParse(&ui_text, text_buf, text);
 	C2D_TextOptimize(&ui_text);
-	C2D_DrawText(&ui_text, C2D_WithColor, 8.0f, y, 0.5f, scale, scale, color);
+	C2D_DrawText(&ui_text, C2D_WithColor, x, y, 0.5f, scale, scale, color);
 }
 
 static void render_ui(void)
@@ -461,26 +454,26 @@ static void render_ui(void)
 	char buf[256];
 
 	std::snprintf(buf, sizeof(buf), "Cube Manipulator");
-	draw_ui_text(buf, 8.0f, 0.42f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 8.0f, 8.0f, 0.42f, C2D_Color32(255, 255, 255, 255));
 
 	std::snprintf(buf, sizeof(buf), "Pos: %.1f %.1f %.1f", cube_pos.x, cube_pos.y, cube_pos.z);
-	draw_ui_text(buf, 30.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 8.0f, 30.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
 	const float rad_to_deg = 180.0f / 3.14159265f;
 	std::snprintf(buf, sizeof(buf), "Rot: %.1f %.1f %.1f deg", cube_rot_x * rad_to_deg, cube_rot_y * rad_to_deg, cube_rot_z * rad_to_deg);
-	draw_ui_text(buf, 48.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 8.0f, 48.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
 	std::snprintf(buf, sizeof(buf), "Selected: %s", selected_vertex >= 0 ? vertex_names[selected_vertex] : "None");
-	draw_ui_text(buf, 66.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text(buf, 8.0f, 66.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 
 	std::snprintf(buf, sizeof(buf), "D-pad: Move  Circle: Rotate");
-	draw_ui_text(buf, 90.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	draw_ui_text(buf, 8.0f, 90.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 	std::snprintf(buf, sizeof(buf), "Touch: Drag Vertex  X: Reset");
-	draw_ui_text(buf, 108.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	draw_ui_text(buf, 8.0f, 108.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 	std::snprintf(buf, sizeof(buf), "Y: Random Colors");
-	draw_ui_text(buf, 126.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
+	draw_ui_text(buf, 8.0f, 126.0f, 0.30f, C2D_Color32(128, 128, 128, 255));
 
-	draw_ui_text("Vertices:", 150.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
+	draw_ui_text("Vertices:", 8.0f, 150.0f, 0.34f, C2D_Color32(255, 255, 255, 255));
 	for (int i = 0; i < 8; i++)
 	{
 		float x = 8.0f + (i % 2) * 160.0f;
@@ -492,7 +485,7 @@ static void render_ui(void)
 		C2D_DrawRectSolid(x, y + 2.0f, 0.5f, 7.0f, 7.0f, swatch_color);
 		u32 text_color = (i == selected_vertex) ? C2D_Color32(0, 255, 255, 255) : C2D_Color32(255, 255, 255, 255);
 		std::snprintf(buf, sizeof(buf), "%s %.1f %.1f %.1f", vertex_names[i], cube_vertices[i].x, cube_vertices[i].y, cube_vertices[i].z);
-		draw_ui_text(buf, y, 0.28f, text_color);
+		draw_ui_text(buf, x + 12.0f, y, 0.28f, text_color);
 	}
 }
 
@@ -590,7 +583,7 @@ int main(int argc, char** argv)
 		if (!C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) continue;
 
 		C3D_FrameDrawOn(top_target);
-		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, C2D_Color32(0x20, 0x20, 0x20, 0xFF), 0);
+		C3D_RenderTargetClear(top_target, C3D_CLEAR_ALL, C2D_Color32(0x20, 0x20, 0x20, 0xFF), 0x00FFFFFF);
 		configure_cube_state();
 		render_cube_faces();
 		// Overlay passes: keep depth test (LEQUAL so co-planar passes) but only write color
