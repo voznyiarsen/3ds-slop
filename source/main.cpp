@@ -28,6 +28,7 @@ namespace Config {
 	constexpr float DEADZONE = 15.0f;
 	constexpr float MOVE_SPEED = 0.1f;
 	constexpr float ROT_SPEED = 0.01f;
+	constexpr float CIRCLE_MAX = 155.0f;
 	constexpr float MIN_NDC = -1.0f;
 	constexpr float MAX_NDC = 1.0f;
 }
@@ -413,7 +414,7 @@ static void handle_input(u32 kDown, u32 kHeld)
 
 	if (len > deadzone)
 	{
-		float magnitude = (len - deadzone) / (32767.0f - deadzone);
+		float magnitude = (len - deadzone) / (Config::CIRCLE_MAX - deadzone);
 		magnitude = std::min(magnitude, 1.0f);
 		float nx = cx / len;
 		float ny = cy / len;
